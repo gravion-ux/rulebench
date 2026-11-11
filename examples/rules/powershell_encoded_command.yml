@@ -1,0 +1,21 @@
+title: Suspicious PowerShell Encoded Command
+id: 8f1b2c44-0d3e-4a51-9c77-2b6e5d4a1c90
+status: test
+description: Detects PowerShell invoked with an encoded command payload.
+author: rulebench examples
+level: high
+logsource:
+  product: windows
+  category: process_creation
+tags:
+  - attack.t1059.001
+  - attack.execution
+detection:
+  selection:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains:
+      - '-enc'
+      - '-EncodedCommand'
+  condition: selection
+falsepositives:
+  - Administrative scripts that legitimately encode arguments

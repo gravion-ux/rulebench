@@ -1,0 +1,8 @@
+title: Broken Example Rule
+id: 6b1f0a92-4d7e-4c83-b5a1-9e2d8c6f0a37
+status: test
+detection:
+  selection:
+    EventID: 4624
+  condition: selection
+  broken: [this mapping is not closed

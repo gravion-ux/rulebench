@@ -1,0 +1,21 @@
+title: Certutil Download of a Remote File
+id: 6a0d41b7-2e58-4c93-bf10-7d3e5c9a2b46
+status: test
+description: Detects certutil used to fetch a file over the network.
+author: rulebench examples
+level: high
+logsource:
+  product: windows
+  category: process_creation
+tags:
+  - attack.t1105
+  - attack.ingress-tool-transfer
+detection:
+  selection:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains:
+      - 'urlcache'
+      - '-urlcache'
+  condition: selection
+falsepositives:
+  - Approved software distribution scripts

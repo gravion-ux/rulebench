@@ -1,0 +1,6 @@
+cases:
+  - name: the broken rule is rejected rather than silently ignored
+    rule: broken_example
+    expect: error
+    event:
+      EventID: 4624

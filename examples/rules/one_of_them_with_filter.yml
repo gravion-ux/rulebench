@@ -1,0 +1,21 @@
+title: Example Rule Using One Of Them
+id: 4b7d1e58-9c26-4f03-8a54-7e1b3d9f2c60
+status: test
+description: A rule that uses 'of them' while also defining a filter selection.
+author: rulebench examples
+level: low
+logsource:
+  product: windows
+  category: process_creation
+tags:
+  - attack.t1033
+detection:
+  selection_cmd:
+    CommandLine|contains: 'whoami'
+  selection_ip:
+    IpAddress|startswith: '10.'
+  filter:
+    User: 'SYSTEM'
+  condition: 1 of them
+falsepositives:
+  - Inventory tooling

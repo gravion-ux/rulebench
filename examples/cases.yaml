@@ -1,0 +1,44 @@
+cases:
+  - name: encoded powershell matches
+    rule: powershell_encoded_command
+    expect: match
+    event_name: encoded-powershell
+
+  - name: plain powershell does not match
+    rule: powershell_encoded_command
+    expect: no-match
+    event_name: plain-powershell
+
+  - name: certutil download matches
+    rule: certutil_download
+    expect: match
+    event_name: certutil-download
+
+  - name: certutil without a urlcache does not match
+    rule: certutil_download
+    expect: no-match
+    event_name: certutil-local
+
+  - name: native rundll32 matches
+    rule: rundll32_execution
+    expect: match
+    event_name: rundll32-native
+
+  - name: 32-bit rundll32 is filtered out
+    rule: rundll32_execution
+    expect: no-match
+    event_name: rundll32-32bit
+
+  - name: inline event matches the encoded command rule
+    rule: powershell_encoded_command
+    expect: match
+    event:
+      Image: 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+      CommandLine: 'powershell.exe -EncodedCommand SQBuAHYAbwBl'
+
+  - name: the whoami rule matches a whoami command
+    rule: one_of_them_with_filter
+    expect: match
+    event:
+      CommandLine: 'cmd.exe /c whoami /all'
+      User: 'CONTOSO\analyst'

@@ -1,0 +1,19 @@
+title: Rundll32 Execution
+id: 3c9e7b02-5f41-4a6d-8e13-2d4b6c8a0f57
+status: test
+description: Detects rundll32 execution, excluding the 32-bit system copy.
+author: rulebench examples
+level: medium
+logsource:
+  product: windows
+  category: process_creation
+tags:
+  - attack.t1218.011
+detection:
+  selection:
+    Image|endswith: '\rundll32.exe'
+  filter:
+    Image|endswith: '\SysWOW64\rundll32.exe'
+  condition: selection and not filter
+falsepositives:
+  - Legitimate calls to signed system libraries
