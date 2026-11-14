@@ -214,6 +214,13 @@ monitoring.
 See [CONTRIBUTING.md](CONTRIBUTING.md). Behaviour changes to rule evaluation need a
 conformance case that demonstrates the change, because that is the whole point of the tool.
 
+## Sponsors
+
+Sponsorship pays for the maintenance, triage and release time behind this tool. Sponsors are
+listed here by name, and name placement starts at the $25 a month tier.
+
+- [Sponsor on GitHub](https://github.com/sponsors/gravion-ux)
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
