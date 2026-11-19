@@ -15,7 +15,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from rulebench.events import Event
@@ -67,6 +67,9 @@ KNOWN_MODIFIERS = (
 
 #: The dash-like characters the ``windash`` modifier treats as interchangeable.
 WINDASH_CHARACTERS = "-/–—―"
+
+#: An unambiguous decimal literal. Anything else is compared as text.
+_DECIMAL_RE = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)")
 
 
 class ModifierError(ValueError):
@@ -134,6 +137,7 @@ class _State:
     regex_flags: int = 0
     windash: bool = False
     mode: str = "equals"
+    negated: bool = False
     numeric_op: str | None = None
     cidr: str | None = None
     exists: bool | None = None
@@ -169,9 +173,15 @@ def _normalise(pattern: Any) -> list[Any]:
 def _as_number(text: str) -> float | None:
     """Parse a value as a finite number.
 
+    Only an unambiguous decimal literal counts as a number. Python's ``float``
+    would also accept ``1_000``, ``" 12 "`` and ``1e5``, and none of those is a
+    number in a Sigma rule, so they are compared as text instead.
+
     :param text: The text to parse.
     :returns: The number, or None when the text is not numeric.
     """
+    if not isinstance(text, str) or not _DECIMAL_RE.fullmatch(text):
+        return None
     try:
         number = float(text)
     except (TypeError, ValueError):
@@ -179,6 +189,20 @@ def _as_number(text: str) -> float | None:
     if not math.isfinite(number):
         return None
     return number
+
+
+def _field_number(text: str) -> float | None:
+    """Parse a field value as a number, ignoring surrounding whitespace.
+
+    A rule value has to be an unambiguous number, but a field value may carry
+    padding that came from the log it was read from.
+
+    :param text: The field text to parse.
+    :returns: The number, or None when the text is not numeric.
+    """
+    if not isinstance(text, str):
+        return None
+    return _as_number(text.strip())
 
 
 def has_wildcard(pattern: str) -> bool:
@@ -274,6 +298,33 @@ def _utf16_variants(text: str) -> dict[str, str]:
     }
 
 
+def _exists_flag(values: list[Any]) -> bool:
+    """Read the boolean flag carried by the ``exists`` modifier.
+
+    A rule file may write the flag as a YAML boolean or as a quoted string, so
+    ``true`` and ``false`` are accepted as text. Any other value makes the rule
+    impossible to evaluate faithfully, so it is rejected.
+
+    :param values: The rule values the modifier was given.
+    :returns: True when the field has to be present.
+    :raises ModifierError: When the value is not a boolean.
+    """
+    if not values:
+        raise ModifierError("the 'exists' modifier requires a boolean value")
+    value = values[0]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text == "true":
+            return True
+        if text == "false":
+            return False
+    raise ModifierError(
+        f"the 'exists' modifier requires a boolean value, got {value!r}"
+    )
+
+
 def _apply_modifier(state: _State, modifier: str) -> None:
     """Apply one modifier to the matching state.
 
@@ -294,9 +345,9 @@ def _apply_modifier(state: _State, modifier: str) -> None:
     elif modifier == "endswith":
         state.mode = "endswith"
     elif modifier == "neq":
-        state.mode = "not_equals"
+        state.negated = True
     elif modifier == "exists":
-        state.exists = bool(state.original[0]) if state.original else False
+        state.exists = _exists_flag(state.original)
     elif modifier == "re":
         state.regex = True
     elif modifier in REGEX_SUBMODIFIERS:
@@ -432,10 +483,25 @@ def _text_equals(state: _State, pattern: str, field_text: str) -> bool:
         flags = 0 if state.case_sensitive else re.IGNORECASE
         return re.fullmatch(wildcard_regex(pattern), field_text, flags) is not None
     pattern_number = _as_number(pattern)
-    field_number = _as_number(field_text)
+    field_number = _field_number(field_text)
     if pattern_number is not None and field_number is not None:
         return pattern_number == field_number
     return _casefold(pattern, state.case_sensitive) == _casefold(field_text, state.case_sensitive)
+
+
+def _literal_equals(state: _State, left: str, right: str) -> bool:
+    """Compare two values as text, without wildcards or numeric semantics.
+
+    The ``fieldref`` modifier compares one field with another. Neither side is
+    a rule value there, so a wildcard must not expand and a number must not be
+    compared numerically.
+
+    :param state: The matching state.
+    :param left: The first value.
+    :param right: The second value.
+    :returns: True when the values are equal.
+    """
+    return _casefold(left, state.case_sensitive) == _casefold(right, state.case_sensitive)
 
 
 def _search_flags(state: _State) -> int:
@@ -537,7 +603,7 @@ def _numeric_matches(operation: str, pattern: str, field_text: str) -> bool:
     :returns: True when the comparison holds.
     """
     pattern_number = _as_number(pattern)
-    field_number = _as_number(field_text)
+    field_number = _field_number(field_text)
     if pattern_number is None or field_number is None:
         return False
     if operation == "lt":
@@ -580,7 +646,7 @@ def _coerce_datetime(value: Any) -> datetime | None:
         return None
     if isinstance(value, (int, float)):
         try:
-            return datetime.fromtimestamp(value)
+            return datetime.fromtimestamp(value, tz=timezone.utc)
         except (OverflowError, OSError, ValueError):
             return None
     if isinstance(value, str):
@@ -594,15 +660,18 @@ def _coerce_datetime(value: Any) -> datetime | None:
     return None
 
 
-def _time_matches(component: str, pattern: str, field_text: str) -> bool:
+def _time_matches(component: str, pattern: str, field_value: Any) -> bool:
     """Compare one component of a date against a number.
+
+    The field value is used as it was read from the event, because a timestamp
+    may be an epoch number and rendering it as text first would lose that.
 
     :param component: The date component to extract.
     :param pattern: The expected value.
-    :param field_text: The field text holding a date.
+    :param field_value: The field value holding a date.
     :returns: True when the component matches.
     """
-    moment = _coerce_datetime(field_text)
+    moment = _coerce_datetime(field_value)
     if moment is None:
         return False
     expected = _as_number(pattern)
@@ -623,19 +692,19 @@ def _candidate_matches(
     state: _State,
     candidate: _Candidate,
     views: Mapping[str, str],
-    mode: str | None = None,
+    field_value: Any,
 ) -> bool:
     """Test one candidate against a field value.
 
     :param state: The matching state.
     :param candidate: The candidate to test.
     :param views: The rendered field views.
-    :param mode: An override for the comparison mode.
+    :param field_value: The field value as it was read from the event.
     :returns: True when the candidate matches.
     """
     if candidate.pattern is None:
         return views.get("raw", "") == ""
-    effective_mode = mode or state.mode
+    effective_mode = state.mode
     for kind in candidate.views:
         field_text = views.get(kind)
         if field_text is None:
@@ -653,7 +722,7 @@ def _candidate_matches(
             if _cidr_matches(state.cidr, field_text):
                 return True
         elif state.time_component is not None:
-            if _time_matches(state.time_component, candidate.pattern, field_text):
+            if _time_matches(state.time_component, candidate.pattern, field_value):
                 return True
         else:
             if effective_mode == "contains":
@@ -704,19 +773,22 @@ def match_field(event: Event, spec: FieldSpec, pattern: Any) -> bool:
         reference_found, reference_value = event.get(state.fieldref)
         if not reference_found:
             return False
-        equal = _text_equals(state, _to_text(field_value), _to_text(reference_value))
-        return not equal if state.mode == "not_equals" else equal
+        equal = _literal_equals(state, _to_text(field_value), _to_text(reference_value))
+        return not equal if state.negated else equal
 
     views = _build_views(field_value, state.values)
 
-    if state.mode == "not_equals":
-        # Every specified value must differ from the field value.
+    if state.negated:
+        # The field must not satisfy any of the specified values.
         return not any(
-            _candidate_matches(state, candidate, views, mode="equals")
+            _candidate_matches(state, candidate, views, field_value)
             for candidate in state.values
         )
 
-    results = [_candidate_matches(state, candidate, views) for candidate in state.values]
+    results = [
+        _candidate_matches(state, candidate, views, field_value)
+        for candidate in state.values
+    ]
     if state.require_all:
         return all(results)
     return any(results)

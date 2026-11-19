@@ -318,6 +318,79 @@ def test_fieldref_can_be_combined_with_neq() -> None:
     assert match_field(event_with(Source="a", Destination="a"), spec, "Destination") is False
 
 
+def test_fieldref_compares_literally_and_does_not_expand_wildcards() -> None:
+    """A fieldref compares two field values, not two wildcard patterns."""
+    spec = parse_field_spec("Source|fieldref")
+    event = event_with(Source="a*b", Destination="axb")
+    assert match_field(event, spec, "Destination") is False
+
+
+def test_fieldref_compares_literally_and_does_not_compare_numbers() -> None:
+    """A fieldref compares two field values as text, not as numbers."""
+    spec = parse_field_spec("Source|fieldref")
+    event = event_with(Source="1e5", Destination="100000")
+    assert match_field(event, spec, "Destination") is False
+
+
+def test_a_value_with_underscores_is_not_a_number() -> None:
+    """A rule value is only a number when it is an unambiguous decimal."""
+    spec = parse_field_spec("Field")
+    assert match_field(event_with(Field="1000"), spec, "1_000") is False
+
+
+def test_a_value_in_scientific_notation_is_not_a_number() -> None:
+    """A rule value is only a number when it is an unambiguous decimal."""
+    spec = parse_field_spec("Field")
+    assert match_field(event_with(Field="100000"), spec, "1e5") is False
+
+
+def test_a_value_with_padding_is_not_a_number() -> None:
+    """A rule value is only a number when it is an unambiguous decimal."""
+    spec = parse_field_spec("Field")
+    assert match_field(event_with(Field="12"), spec, " 12 ") is False
+
+
+def test_plain_numbers_are_still_compared_numerically() -> None:
+    """A decimal rule value and a decimal field value compare by number."""
+    spec = parse_field_spec("Field")
+    assert match_field(event_with(Field="42.0"), spec, "42") is True
+
+
+def test_neq_negates_the_contains_mode() -> None:
+    """A neq after contains means the field must not contain the value."""
+    spec = parse_field_spec("Field|contains|neq")
+    assert match_field(event_with(Field="xxfooxx"), spec, "foo") is False
+    assert match_field(event_with(Field="xxbarxx"), spec, "foo") is True
+
+
+def test_neq_negates_the_startswith_mode() -> None:
+    """A neq after startswith means the field must not start with the value."""
+    spec = parse_field_spec("Field|startswith|neq")
+    assert match_field(event_with(Field="foobar"), spec, "foo") is False
+    assert match_field(event_with(Field="barfoo"), spec, "foo") is True
+
+
+def test_exists_reads_the_string_false_as_a_boolean() -> None:
+    """The string 'false' asks for an absent field, not a present one."""
+    spec = parse_field_spec("Field|exists")
+    assert match_field(event_with(Field="x"), spec, "false") is False
+    assert match_field(event_with(Other="x"), spec, "false") is True
+
+
+def test_exists_rejects_a_value_that_is_not_a_boolean() -> None:
+    """The exists modifier only accepts a boolean value."""
+    spec = parse_field_spec("Field|exists")
+    with pytest.raises(ModifierError):
+        match_field(event_with(Field="x"), spec, "maybe")
+
+
+def test_an_epoch_timestamp_is_read_in_utc() -> None:
+    """An epoch timestamp always resolves to the same UTC components."""
+    spec = parse_field_spec("Timestamp|hour")
+    assert match_field(event_with(Timestamp=0), spec, 0) is True
+    assert match_field(event_with(Timestamp=0), spec, 5) is False
+
+
 def test_a_null_value_matches_an_empty_field() -> None:
     """A null value matches a field that holds nothing."""
     assert match_field(event_with(Image=None), parse_field_spec("Image"), None) is True
