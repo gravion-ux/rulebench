@@ -15,7 +15,8 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
+from functools import lru_cache
 from typing import Any
 
 from rulebench.events import Event
@@ -100,6 +101,25 @@ class FieldSpec:
         return modifier in self.modifiers
 
 
+@lru_cache(maxsize=1024)
+def _field_spec_cached(text: str) -> FieldSpec:
+    """Parse a field specification and remember the result.
+
+    A rule names the same field specifications for every event it is tested
+    against, so the parse is worth keeping.
+
+    :param text: The raw specification.
+    :returns: The parsed specification.
+    :raises ModifierError: When the specification has an empty field name.
+    """
+    parts = text.split("|")
+    name = parts[0].strip()
+    modifiers = tuple(part.strip() for part in parts[1:] if part.strip())
+    if not name:
+        raise ModifierError(f"field specification has an empty field name: {text!r}")
+    return FieldSpec(name=name, modifiers=modifiers)
+
+
 def parse_field_spec(text: str) -> FieldSpec:
     """Parse a field specification such as ``Image|endswith``.
 
@@ -110,12 +130,7 @@ def parse_field_spec(text: str) -> FieldSpec:
     """
     if not isinstance(text, str):
         raise ModifierError(f"field specification must be a string, got {type(text).__name__}")
-    parts = text.split("|")
-    name = parts[0].strip()
-    modifiers = tuple(part.strip() for part in parts[1:] if part.strip())
-    if not name:
-        raise ModifierError(f"field specification has an empty field name: {text!r}")
-    return FieldSpec(name=name, modifiers=modifiers)
+    return _field_spec_cached(text)
 
 
 @dataclass(frozen=True)
@@ -205,7 +220,8 @@ def _field_number(text: str) -> float | None:
     return _as_number(text.strip())
 
 
-def has_wildcard(pattern: str) -> bool:
+@lru_cache(maxsize=1024)
+def _has_wildcard_cached(pattern: str) -> bool:
     """Report whether a value contains an unescaped wildcard.
 
     :param pattern: The value to inspect.
@@ -223,11 +239,18 @@ def has_wildcard(pattern: str) -> bool:
     return False
 
 
-def wildcard_regex(pattern: str) -> str:
-    """Translate a Sigma wildcard value into a regular expression.
+def has_wildcard(pattern: str) -> bool:
+    """Report whether a value contains an unescaped wildcard.
 
-    ``*`` matches any number of characters, ``?`` matches exactly one, and a
-    backslash escapes ``*``, ``?`` and itself.
+    :param pattern: The value to inspect.
+    :returns: True when ``*`` or ``?`` appears outside a backslash escape.
+    """
+    return _has_wildcard_cached(pattern)
+
+
+@lru_cache(maxsize=1024)
+def _wildcard_regex_cached(pattern: str) -> str:
+    """Translate a Sigma wildcard value into a regular expression.
 
     :param pattern: The value to translate.
     :returns: The regular expression source.
@@ -253,6 +276,42 @@ def wildcard_regex(pattern: str) -> str:
             parts.append(re.escape(character))
         index += 1
     return "".join(parts)
+
+
+def wildcard_regex(pattern: str) -> str:
+    """Translate a Sigma wildcard value into a regular expression.
+
+    ``*`` matches any number of characters, ``?`` matches exactly one, and a
+    backslash escapes ``*``, ``?`` and itself.
+
+    :param pattern: The value to translate.
+    :returns: The regular expression source.
+    """
+    return _wildcard_regex_cached(pattern)
+
+
+@lru_cache(maxsize=1024)
+def _compiled_wildcard(pattern: str, case_sensitive: bool) -> re.Pattern[str]:
+    """Compile the regular expression a wildcard value expands to.
+
+    :param pattern: The wildcard value.
+    :param case_sensitive: Whether case must be preserved.
+    :returns: The compiled expression.
+    """
+    flags = 0 if case_sensitive else re.IGNORECASE
+    return re.compile(_wildcard_regex_cached(pattern), flags)
+
+
+@lru_cache(maxsize=1024)
+def _compiled_wildcard_end(pattern: str, case_sensitive: bool) -> re.Pattern[str]:
+    """Compile the regular expression a wildcard value expands to, anchored.
+
+    :param pattern: The wildcard value.
+    :param case_sensitive: Whether case must be preserved.
+    :returns: The compiled expression.
+    """
+    flags = 0 if case_sensitive else re.IGNORECASE
+    return re.compile(_wildcard_regex_cached(pattern) + r"\Z", flags)
 
 
 def _windash_regex(pattern: str) -> str:
@@ -480,8 +539,7 @@ def _text_equals(state: _State, pattern: str, field_text: str) -> bool:
     :returns: True when the values are equal.
     """
     if has_wildcard(pattern):
-        flags = 0 if state.case_sensitive else re.IGNORECASE
-        return re.fullmatch(wildcard_regex(pattern), field_text, flags) is not None
+        return _compiled_wildcard(pattern, state.case_sensitive).fullmatch(field_text) is not None
     pattern_number = _as_number(pattern)
     field_number = _field_number(field_text)
     if pattern_number is not None and field_number is not None:
@@ -522,7 +580,7 @@ def _contains_matches(state: _State, pattern: str, field_text: str) -> bool:
     :returns: True when the field contains the value.
     """
     if has_wildcard(pattern):
-        return re.search(wildcard_regex(pattern), field_text, _search_flags(state)) is not None
+        return _compiled_wildcard(pattern, state.case_sensitive).search(field_text) is not None
     return _casefold(pattern, state.case_sensitive) in _casefold(field_text, state.case_sensitive)
 
 
@@ -535,7 +593,7 @@ def _startswith_matches(state: _State, pattern: str, field_text: str) -> bool:
     :returns: True when the field starts with the value.
     """
     if has_wildcard(pattern):
-        return re.match(wildcard_regex(pattern), field_text, _search_flags(state)) is not None
+        return _compiled_wildcard(pattern, state.case_sensitive).match(field_text) is not None
     return _casefold(field_text, state.case_sensitive).startswith(
         _casefold(pattern, state.case_sensitive)
     )
@@ -550,8 +608,7 @@ def _endswith_matches(state: _State, pattern: str, field_text: str) -> bool:
     :returns: True when the field ends with the value.
     """
     if has_wildcard(pattern):
-        expression = re.compile(wildcard_regex(pattern) + r"\Z", _search_flags(state))
-        return expression.search(field_text) is not None
+        return _compiled_wildcard_end(pattern, state.case_sensitive).search(field_text) is not None
     return _casefold(field_text, state.case_sensitive).endswith(
         _casefold(pattern, state.case_sensitive)
     )
@@ -646,7 +703,7 @@ def _coerce_datetime(value: Any) -> datetime | None:
         return None
     if isinstance(value, (int, float)):
         try:
-            return datetime.fromtimestamp(value, tz=timezone.utc)
+            return datetime.fromtimestamp(value, tz=UTC)
         except (OverflowError, OSError, ValueError):
             return None
     if isinstance(value, str):

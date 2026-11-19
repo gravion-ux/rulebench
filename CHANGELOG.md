@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The `fieldref` modifier now compares two field values literally. A wildcard in one field no
+  longer matches another field, and two numeric-looking strings are no longer compared as numbers.
+- A rule value is only treated as a number when it is an unambiguous decimal. `1_000`, `1e5` and a
+  padded value are no longer silently equal to the number they resemble.
+- The `neq` modifier no longer discards the mode another modifier selected, so `contains|neq` and
+  `startswith|neq` now mean "does not contain" and "does not start with".
+- The `exists` modifier reads its flag as a boolean, accepting the strings `true` and `false`, and
+  rejects a value that is not a boolean instead of guessing.
+- An epoch timestamp is read in UTC, so the same event now gives the same answer on every machine.
+- The time modifiers receive the field value as it was read, so an epoch number is no longer
+  rendered as text before it is parsed.
+
+### Changed
+
+- The evaluation hot paths no longer reparse what a rule already states. A condition, a field
+  specification and a wildcard expression are parsed once and reused, and the searchable text of an
+  event is rendered once per event rather than once per keyword. Measured against the previous
+  revision on the same machine, a corpus of 2000 process creation events evaluates 1.43 times
+  faster, a field selection 1.34 times faster and a keyword selection 1.95 times faster.
+
+### Added
+
+- `bench/benchmark.py`, which times the three evaluation hot paths against a built-in corpus, so
+  the numbers above can be reproduced with `python bench/benchmark.py`.
+
 ## [0.1.0] - 2026-11-05
 
 ### Added

@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -58,41 +59,91 @@ class CaseError(ValueError):
     """Raised when a conformance case file cannot be understood."""
 
 
-def _keyword_present(keyword: str, texts: list[str]) -> bool:
+class _SearchIndex:
+    """The searchable text of an event, built the first time it is needed.
+
+    A rule without a keyword selection never searches the event text, so the
+    text is not rendered until a keyword actually asks for it. Once it is
+    rendered it is reused for every keyword of the event.
+    """
+
+    __slots__ = ("_event", "_texts", "_lowered")
+
+    def __init__(self, event: Event) -> None:
+        self._event = event
+        self._texts: list[str] | None = None
+        self._lowered: list[str] | None = None
+
+    @property
+    def texts(self) -> list[str]:
+        """Every field value rendered as a searchable string.
+
+        :returns: One string per field, in insertion order.
+        """
+        if self._texts is None:
+            self._texts = self._event.texts()
+        return self._texts
+
+    @property
+    def lowered(self) -> list[str]:
+        """Every field value rendered in lower case.
+
+        :returns: One string per field, in insertion order.
+        """
+        if self._lowered is None:
+            self._lowered = [text.lower() for text in self.texts]
+        return self._lowered
+
+
+@lru_cache(maxsize=1024)
+def _keyword_regex(keyword: str) -> re.Pattern[str]:
+    """Compile the regular expression a keyword wildcard expands to.
+
+    :param keyword: The keyword.
+    :returns: The compiled expression.
+    """
+    return re.compile(wildcard_regex(keyword), re.IGNORECASE)
+
+
+def _keyword_present(keyword: str, index: _SearchIndex) -> bool:
     """Report whether a keyword appears anywhere in the event.
 
     :param keyword: The keyword to look for.
-    :param texts: The searchable field values.
+    :param index: The searchable text of the event.
     :returns: True when the keyword is present.
     """
     if has_wildcard(keyword):
-        expression = re.compile(wildcard_regex(keyword), re.IGNORECASE)
-        return any(expression.search(text) for text in texts)
-    lowered = keyword.lower()
-    return any(lowered in text.lower() for text in texts)
+        expression = _keyword_regex(keyword)
+        return any(expression.search(text) for text in index.texts)
+    needle = keyword.lower()
+    return any(needle in text for text in index.lowered)
 
 
-def _match_keywords(keywords: list[str], event: Event, require_all: bool = False) -> bool:
+def _match_keywords(
+    keywords: list[str],
+    index: _SearchIndex,
+    require_all: bool = False,
+) -> bool:
     """Match keyword strings against the whole event.
 
     :param keywords: The keywords to look for.
-    :param event: The event to search.
+    :param index: The searchable text of the event.
     :param require_all: Whether every keyword must be present.
     :returns: True when the keyword requirement holds.
     """
     if not keywords:
         return False
-    texts = event.texts()
-    results = [_keyword_present(keyword, texts) for keyword in keywords]
+    results = [_keyword_present(keyword, index) for keyword in keywords]
     return all(results) if require_all else any(results)
 
 
-def match_selection(selection: Any, event: Event) -> bool:
+def _match_selection(selection: Any, event: Event, index: _SearchIndex) -> bool:
     """Evaluate one search identifier block against an event.
 
     :param selection: The selection: a mapping of field specifications to
         values, a list of alternative blocks, or a keyword string.
     :param event: The event to test.
+    :param index: The searchable text of the event.
     :returns: True when the selection matches.
     :raises EvaluationError: When the selection is structurally invalid.
     """
@@ -106,7 +157,7 @@ def match_selection(selection: Any, event: Event) -> bool:
                 keywords = [str(keyword) for keyword in value]
             else:
                 constraints[str(key)] = value
-        if keywords is not None and not _match_keywords(keywords, event, require_all=True):
+        if keywords is not None and not _match_keywords(keywords, index, require_all=True):
             return False
         for field, value in constraints.items():
             spec = parse_field_spec(field)
@@ -117,15 +168,27 @@ def match_selection(selection: Any, event: Event) -> bool:
         results = []
         for item in selection:
             if isinstance(item, Mapping):
-                results.append(match_selection(item, event))
+                results.append(_match_selection(item, event, index))
             elif isinstance(item, str):
-                results.append(_match_keywords([item], event))
+                results.append(_match_keywords([item], index))
             else:
                 results.append(False)
         return any(results)
     if isinstance(selection, str):
-        return _match_keywords([selection], event)
+        return _match_keywords([selection], index)
     return False
+
+
+def match_selection(selection: Any, event: Event) -> bool:
+    """Evaluate one search identifier block against an event.
+
+    :param selection: The selection: a mapping of field specifications to
+        values, a list of alternative blocks, or a keyword string.
+    :param event: The event to test.
+    :returns: True when the selection matches.
+    :raises EvaluationError: When the selection is structurally invalid.
+    """
+    return _match_selection(selection, event, _SearchIndex(event))
 
 
 class _Context:
@@ -135,6 +198,7 @@ class _Context:
         self.identifiers = identifiers
         self.event = event
         self.path = path
+        self._index = _SearchIndex(event)
 
     def identifier_matches(self, name: str) -> bool:
         """Evaluate one named search identifier.
@@ -147,7 +211,7 @@ class _Context:
             raise EvaluationError(
                 f"condition in {self.path} refers to unknown search identifier {name!r}"
             )
-        return match_selection(self.identifiers[name], self.event)
+        return _match_selection(self.identifiers[name], self.event, self._index)
 
     def matching_identifiers(self, pattern: str) -> list[str]:
         """Resolve a search identifier pattern to concrete names.

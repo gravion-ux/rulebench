@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Protocol
 
 __all__ = [
@@ -214,8 +215,12 @@ class _Parser:
         return Identifier(token)
 
 
-def _parse_single(text: str) -> Node:
-    """Parse one condition expression.
+@lru_cache(maxsize=1024)
+def _parse_single_cached(text: str) -> Node:
+    """Parse one condition expression and remember the result.
+
+    A rule carries the same condition for every event it is tested against, so
+    the expression tree is worth keeping.
 
     :param text: The condition text.
     :returns: The expression tree.
@@ -225,6 +230,16 @@ def _parse_single(text: str) -> Node:
     if not tokens:
         raise ConditionError("condition is empty")
     return _Parser(tokens, text).parse()
+
+
+def _parse_single(text: str) -> Node:
+    """Parse one condition expression.
+
+    :param text: The condition text.
+    :returns: The expression tree.
+    :raises ConditionError: When the condition does not parse.
+    """
+    return _parse_single_cached(text)
 
 
 def parse_condition(condition: str | list[str]) -> tuple[Node, ...]:

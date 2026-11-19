@@ -179,6 +179,21 @@ specification is explicit: *"If the tool isn't able to handle placeholders, it m
 rule."* `rulebench` raises `UnsupportedModifierError` rather than quietly guessing, and the
 linter reports the rule as an error.
 
+## Performance
+
+Evaluating a rule against an event is the path every conformance run takes, so it is the path that
+gets measured. `bench/benchmark.py` times the three evaluation workloads against a built-in corpus
+of Windows process creation events:
+
+```bash
+python bench/benchmark.py
+```
+
+Each workload is timed seven times and the fastest run is reported, because the slowest run is
+usually the one that caught a stray background process rather than the one that measured the code.
+Compare two revisions on the same machine and the same Python build; the absolute numbers are not
+comparable between machines.
+
 ## Exit codes
 
 | Code | Meaning |
