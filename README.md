@@ -1,5 +1,9 @@
 # rulebench
 
+![Demo](docs/demo.png)
+
+*Demo: Built-in demo: Sigma rule conformance — 3 cases, 3 passed.*
+
 **Behavioral conformance harness for [Sigma](https://github.com/SigmaHQ/sigma) detection rules.**
 
 `sigma-cli` checks that a rule is *well formed*. `pySigma` checks that a rule can be *converted*.
