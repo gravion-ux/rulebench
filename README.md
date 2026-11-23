@@ -1,4 +1,5 @@
 # rulebench
+[![CI](https://github.com/gravion-ux/rulebench/actions/workflows/ci.yml/badge.svg)](https://github.com/gravion-ux/rulebench/actions/workflows/ci.yml)
 
 ![Demo](docs/demo.png)
 
